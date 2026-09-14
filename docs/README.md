@@ -1,5 +1,6 @@
 # Documentation
 
+- [Workflow authoring](workflows.md): discovery, photo-step schema, navigation, and versioning.
 - [Implementation plan](implementation-plan.md): initial scope, architecture,
   workflow contracts, and integration gates.
 - [SDK notes](sdk-notes.md): dated source investigation and runtime limitations.

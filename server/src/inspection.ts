@@ -13,11 +13,15 @@ export async function evaluate(body: JsonObject): Promise<JsonObject> {
   const stepId = requiredString(body, "stepId");
   const evidenceId = requiredString(body, "evidenceId");
   logEvent("evaluation.start", { evidenceId, stepId });
-  const procedure = await loadProcedure();
+  const procedure = await loadProcedure(body);
   const step = procedure.steps.find((candidate) => candidate.stepId === stepId);
   if (!step) throw new RequestError(404, "STEP_NOT_FOUND", "Procedure step was not found");
   const evidence = await readEvidence(evidenceId);
-  if (evidence.stepId !== stepId)
+  if (
+    evidence.stepId !== stepId ||
+    evidence.procedureId !== procedure.procedureId ||
+    evidence.procedureVersion !== procedure.version
+  )
     throw new RequestError(
       409,
       "EVIDENCE_STEP_MISMATCH",
@@ -27,7 +31,7 @@ export async function evaluate(body: JsonObject): Promise<JsonObject> {
   let aiResult: AICallResult | undefined;
   try {
     aiResult = await callAI(
-      await buildModelMessages(step, evidence),
+      await buildModelMessages(step, evidence, procedure),
       config.aiEvaluationMaxTokens,
       {
         responseFormat: true,
@@ -106,18 +110,29 @@ export async function evaluate(body: JsonObject): Promise<JsonObject> {
 
 export async function ask(body: JsonObject): Promise<JsonObject> {
   const question = requiredString(body, "question");
-  const stepId = typeof body.stepId === "string" ? body.stepId : "purge-limiter";
-  const procedure = await loadProcedure();
+  const stepId = requiredString(body, "stepId");
+  const procedure = await loadProcedure(body);
   const step = procedure.steps.find((candidate) => candidate.stepId === stepId);
   if (!step) throw new RequestError(404, "STEP_NOT_FOUND", "Procedure step was not found");
   let evidence: EvidenceRecord | undefined;
   if (typeof body.evidenceId === "string" && body.evidenceId.trim())
     evidence = await readEvidence(body.evidenceId);
+  if (
+    evidence &&
+    (evidence.stepId !== stepId ||
+      evidence.procedureId !== procedure.procedureId ||
+      evidence.procedureVersion !== procedure.version)
+  )
+    throw new RequestError(
+      409,
+      "EVIDENCE_STEP_MISMATCH",
+      "Evidence belongs to another workflow or step",
+    );
   const currentFinding = evidence?.evaluation;
   const findingContext = currentFinding
     ? `Current AI finding: ${String(currentFinding.finding || "")}. Recommended action: ${String(currentFinding.recommendedAction || "")}.`
     : "There is no saved AI finding for this evidence yet.";
-  const askText = `Answer this technician question in concise English using only the private procedure and asset context below. If the question is outside the procedure, say that clearly. Asset: ${String(procedure.asset.name || "Bambu Lab A1 mini")} (${String(procedure.asset.id || "A1M-0042")}). Procedure step: ${step.title}. Instruction: ${step.instruction}. Visible criteria: ${(step.visualCriteria || []).join("; ")}. ${findingContext} The attached image is the current evidence. Question: ${question}`;
+  const askText = `Answer this technician question in concise English using only the private procedure and asset context below. If the question is outside the procedure, say that clearly. Asset: ${String(procedure.asset.name)} (${String(procedure.asset.id)}). Procedure step: ${step.title}. Instruction: ${step.instruction}. Visible criteria: ${(step.visualCriteria || []).join("; ")}. ${findingContext} Reference images are optional good/bad examples. Their captions, in image order: ${JSON.stringify(step.references || [])}. ${evidence ? "The final image is current evidence." : "There is no current evidence image."} Question: ${question}`;
   const contentParts = await imageParts(step, evidence);
   const content = (
     await callAI(

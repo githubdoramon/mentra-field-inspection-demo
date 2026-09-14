@@ -15,7 +15,7 @@ export async function saveSnapshot(
   body: JsonObject,
   type: SnapshotType,
 ): Promise<JsonObject> {
-  const procedure = await loadProcedure();
+  const procedure = await loadProcedure(body);
   const termination = type === "reports" ? validateReportTermination(body, procedure) : undefined;
   const snapshot = termination ? { ...body, termination } : body;
   const headerId = req.headers["idempotency-key"];

@@ -23,21 +23,26 @@ loadDotEnv(join(ROOT, "server", ".env"));
 
 export const config = {
   data: join(ROOT, "data"),
-  procedurePath: join(ROOT, "workflows", "purge-limiter.json"),
+  ffprobe: process.env.FFPROBE_PATH || "ffprobe",
+  workflows: join(ROOT, "workflows"),
   port: numberEnv("PORT", 8787),
   host: process.env.HOST || "0.0.0.0",
   aiBaseUrl: (process.env.AI_BASE_URL || "http://localhost:11434").replace(/\/$/, ""),
   aiModel: process.env.AI_MODEL || "qwen3.8-27b",
   aiTimeoutMs: numberEnv("AI_TIMEOUT_MS", 90_000),
   aiEnableThinking: process.env.AI_ENABLE_THINKING === "true",
-  aiImageMaxEdge: Math.max(128, Math.min(2048, Math.floor(numberEnv("AI_IMAGE_MAX_EDGE", 640)))),
+  aiImageMaxEdge: Math.max(128, Math.min(2048, Math.floor(numberEnv("AI_IMAGE_MAX_EDGE", 512)))),
+  aiReferenceMaxEdge: Math.max(
+    128,
+    Math.min(2048, Math.floor(numberEnv("AI_REFERENCE_MAX_EDGE", 256))),
+  ),
   aiImageJpegQuality: Math.max(
     1,
-    Math.min(100, Math.floor(numberEnv("AI_IMAGE_JPEG_QUALITY", 80))),
+    Math.min(100, Math.floor(numberEnv("AI_IMAGE_JPEG_QUALITY", 70))),
   ),
   aiEvaluationMaxTokens: Math.max(
     500,
-    Math.min(4_000, Math.floor(numberEnv("AI_EVALUATION_MAX_TOKENS", 2_000))),
+    Math.min(4_000, Math.floor(numberEnv("AI_EVALUATION_MAX_TOKENS", 500))),
   ),
   evidencePreviewMaxEdge: 768,
   evidencePreviewJpegQuality: 75,

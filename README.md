@@ -20,11 +20,12 @@ inspection records while keeping the phone available for review and recovery.
 - A browser preview that uses reference images or uploaded photos with the same
   controller and real server evaluation routes.
 
-The included Bambu Lab A1 mini purge-limiter workflow is the first sample.
-Currently, only its purge-limiter check is implemented; the other listed checks
-remain pending. The project is intended to grow with additional equipment and
-procedures. Adding a workflow today requires updating the code that selects it;
-there is no automatic multi-workflow discovery yet.
+The server discovers JSON definitions in `workflows/`. The phone work queue
+lets you select or refresh workflows without rebuilding the miniapp. Samples
+include a three-step printer inspection (purge limiter, panel lubrication
+status, build plate) and a three-step workstation readiness inspection.
+All checks are photo-based. Good/bad reference images are optional; lubrication
+and build-plate references can be added later. See [workflow authoring](docs/workflows.md).
 
 ## Run it
 
@@ -83,17 +84,18 @@ Copy [server/.env.example](server/.env.example) to `server/.env` and set:
 - `AI_TIMEOUT_MS`, `AI_EVALUATION_MAX_TOKENS`, and `AI_ENABLE_THINKING`: request
   timeout, response budget, and optional provider-specific reasoning behavior.
 - `AI_IMAGE_MAX_EDGE` / `AI_IMAGE_JPEG_QUALITY`: AI-input resizing, defaulting to
-  a 640-pixel maximum edge and JPEG quality 80. Original archived evidence is preserved.
+  a 512-pixel evidence maximum edge and JPEG quality 70. References use
+  `AI_REFERENCE_MAX_EDGE` (256 by default), capped by the evidence maximum. Original archived evidence is preserved.
 
 Restart the server after changing `.env`. Keep credentials on the server;
 `.env` and runtime `data/` are ignored by Git. Without a token, the server
 archives evidence but leaves evaluation pending.
 
-The sample configuration is [workflows/purge-limiter.json](workflows/purge-limiter.json).
-Both the miniapp and server currently select that file explicitly. To add a
-procedure, update those selection points and the server's procedure handling,
-and supply matching knowledge/reference assets and supported step behavior.
-Changing JSON alone does not implement additional checks. Reference images live
+The sample configuration is [workflows/a1-mini.json](workflows/a1-mini.json).
+Add another JSON definition under `workflows/` and refresh the work queue.
+Each photo step supplies explicit criteria, capture guidance, and optional
+captioned good/bad references. Increment the workflow version after edits;
+active inspections retain their original version. Reference images live
 only in `knowledge/` and are served by the companion API. The miniapp needs a
 server connection to display them; image updates do not require a miniapp rebuild.
 
@@ -124,3 +126,9 @@ confirmed upstream AI and physical Live validation on the tested setup on
 2026-09-14; see [validation notes](docs/sample-validation.md). A visual
 pass establishes visible criteria only, not hidden fastening strength or
 machine safety.
+
+`bun run dev` supplies the laptop's LAN companion URL to the phone build.
+Set `MENTRA_PUBLIC_SERVER_URL` when using a different companion address or port.
+This explicit build-time URL also overrides a saved phone URL on startup. Only
+this public URL enters the miniapp; server AI credentials remain server-only.
+The sample default address is used for standalone builds without this setting.

@@ -1,36 +1,31 @@
-import workflow from "../../../workflows/purge-limiter.json";
-import type { InspectionSnapshot, ProcedureStep } from "./types";
+import { configuredServerUrl } from "./server-url";
+import type { InspectionSnapshot, WorkflowDefinition } from "./types";
 
-const implementedStep = workflow.steps.find((step) => step.status === "implemented");
-if (!implementedStep) throw new Error("Workflow must include an implemented inspection step");
-export const STEP_ID = implementedStep.stepId;
-export const createSnapshot = (serverUrl = "http://192.168.1.42:8787"): InspectionSnapshot => ({
+export const createSnapshot = (
+  serverUrl = configuredServerUrl || "http://192.168.1.42:8787",
+  workflow?: WorkflowDefinition,
+): InspectionSnapshot => ({
   version: 1,
-  workOrder: workflow.workOrder.id,
+  workflow,
+  procedureId: workflow?.id,
+  procedureVersion: workflow?.version,
+  procedureTitle: workflow?.title,
+  workOrder: workflow?.workOrder.id || "",
   asset: {
-    id: workflow.asset.id,
-    model: workflow.asset.name,
-    location: workflow.workOrder.location,
+    id: workflow?.asset.id || "",
+    model: workflow?.asset.name || "Choose an inspection",
+    location: workflow?.workOrder.location || "",
   },
-  technician: workflow.asset.technician,
+  technician: workflow?.asset.technician || "",
   status: "ready",
-  currentStepId: STEP_ID,
-  steps: workflow.steps.map(
-    (step, index): ProcedureStep => ({
-      id: step.stepId,
+  currentStepId: workflow?.steps[0]?.stepId || null,
+  steps:
+    workflow?.steps.map(({ stepId, ...step }, index) => ({
+      ...step,
+      id: stepId,
       number: index + 1,
-      title: step.title,
-      instruction: step.instruction,
-      references:
-        "references" in step
-          ? {
-              loose: `/api/reference?stepId=${encodeURIComponent(step.stepId)}&role=loose`,
-              seated: `/api/reference?stepId=${encodeURIComponent(step.stepId)}&role=seated`,
-            }
-          : undefined,
-      state: step.stepId === STEP_ID ? "current" : "pending",
-    }),
-  ),
+      state: index === 0 ? "current" : "pending",
+    })) || [],
   attempts: [],
   evidence: [],
   recording: { status: "idle" },

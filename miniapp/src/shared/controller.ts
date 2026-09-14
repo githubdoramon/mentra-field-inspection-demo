@@ -1,4 +1,4 @@
-import { createSnapshot, STEP_ID } from "./workflow";
+import { createSnapshot } from "./workflow";
 import type {
   InspectionSnapshot,
   Attempt,
@@ -19,6 +19,7 @@ export interface Ports {
   openInspection?(): void;
   capture(): Promise<Photo>;
   speak(text: string): Promise<void>;
+  stopSpeech?(): void;
   startRecording?(): Promise<{ recordingId: string }>;
   stopRecording?(id: string, uploadUrl: string): Promise<void>;
 }
@@ -67,6 +68,7 @@ export class InspectionController {
   state = createSnapshot();
   busy = false;
   speaking = false;
+  private speechId = 0;
   private recordingId?: string;
   private stoppingRecording?: Promise<void>;
   private trackedVideos = new Set<string>();
@@ -74,14 +76,13 @@ export class InspectionController {
   private lastCommandAt = 0;
   private photoPreviews = new Map<string, string>();
   constructor(private ports: Ports) {}
-  async init(serverUrl?: string) {
+  async init(serverUrl?: string, overrideSavedServer = false) {
     try {
       const saved = await this.ports.load();
       if (saved) {
         const restored = JSON.parse(saved) as InspectionSnapshot;
         if (restored.version === 1)
           this.state = {
-            ...this.state,
             ...restored,
             operation: undefined,
             pendingPhoto: undefined,
@@ -89,16 +90,132 @@ export class InspectionController {
         if (["capturing", "evaluating"].includes(this.state.status)) this.state.status = "error";
         if (["recording", "uploading"].includes(this.state.recording.status))
           this.state.recording.status = "interrupted";
-      } else if (serverUrl) this.state.serverUrl = serverUrl;
+      }
+      if (serverUrl && (!saved || overrideSavedServer)) this.state.serverUrl = serverUrl;
     } catch {
       this.ports.toast("warning", "Your previous inspection could not be restored.");
     }
-    const configuredSteps = createSnapshot().steps;
+    await this.refreshWorkflows();
+    await this.publish();
+    for (const clip of [...(this.state.recording.clips || []), this.state.recording])
+      if (clip.sessionId && clip.stopConfirmedAt && clip.status !== "uploaded")
+        void this.trackVideo(clip.sessionId);
+  }
+  private identity() {
+    return { procedureId: this.state.procedureId, procedureVersion: this.state.procedureVersion };
+  }
+  private get currentStep() {
+    return this.state.steps.find((step) => step.id === this.state.currentStepId);
+  }
+  private get currentAttempt() {
+    return [...this.state.attempts]
+      .reverse()
+      .find((attempt) => attempt.stepId === this.state.currentStepId);
+  }
+  async refreshWorkflows(allowBusy = false) {
+    if (this.busy && !allowBusy) return;
+    try {
+      const response = await this.request<{ workflows: import("./types").WorkflowDefinition[] }>(
+        "/api/workflows",
+      );
+      this.state.workflows = response.workflows;
+      const selected = response.workflows.find(
+        (workflow) => workflow.id === this.state.procedureId,
+      );
+      const refreshed = !this.state.steps.length
+        ? response.workflows[0]
+        : this.state.status === "ready" && selected?.version !== this.state.procedureVersion
+          ? selected
+          : undefined;
+      if (refreshed) {
+        this.state = {
+          ...createSnapshot(this.state.serverUrl, refreshed),
+          workflows: response.workflows,
+        };
+      }
+    } catch (error) {
+      this.ports.toast("error", `Workflows could not be loaded: ${messageOf(error)}`);
+    }
+    await this.publish();
+  }
+  async selectWorkflow(id: string) {
+    if (this.busy || !["ready", "report"].includes(this.state.status)) return;
+    const workflow = this.state.workflows?.find((w) => w.id === id);
+    if (!workflow) return;
+    this.state = {
+      ...createSnapshot(this.state.serverUrl, workflow),
+      workflows: this.state.workflows,
+    };
+    await this.publish();
+  }
+  private async activateStep(id: string, announcement = "") {
+    const target = this.state.steps.find((step) => step.id === id);
+    if (!target) return;
+    this.state.currentStepId = id;
     this.state.steps = this.state.steps.map((step) => ({
       ...step,
-      references: configuredSteps.find((configured) => configured.id === step.id)?.references,
+      state: step.state === "passed" ? "passed" : step.id === id ? "current" : "pending",
     }));
+    const latest = this.currentAttempt;
+    this.state.latestFinding = latest?.finding;
+    this.state.guidance = undefined;
+    this.state.escalation = target.escalation;
+    this.state.status =
+      target.state === "passed"
+        ? "passed"
+        : latest?.status === "pending" || latest?.status === "capturing"
+          ? "error"
+          : latest?.status === "adjustment_required" || latest?.status === "evidence_unclear"
+            ? latest.status
+            : "recording";
+    this.state.message =
+      this.state.status === "error"
+        ? "This step has an unfinished photo check. Retry or capture a new photo."
+        : target.instruction;
     await this.publish();
+    if (!this.state.pausedAt)
+      void this.say(`${announcement ? `${announcement} ` : ""}${target.instruction}`);
+  }
+  async selectStep(id: string) {
+    if (this.busy || ["ready", "report"].includes(this.state.status) || !this.state.procedureId)
+      return;
+    this.busy = true;
+    this.stopSpeech();
+    this.state.operation = "navigate";
+    try {
+      await this.activateStep(id);
+    } finally {
+      this.busy = false;
+      this.state.operation = undefined;
+      await this.publish();
+    }
+  }
+  private async advance(announcement = "") {
+    const index = this.state.steps.findIndex((step) => step.id === this.state.currentStepId);
+    const ordered = [...this.state.steps.slice(index + 1), ...this.state.steps.slice(0, index + 1)];
+    const next = ordered.find((step) => step.state !== "passed");
+    if (next) await this.activateStep(next.id, announcement);
+    else {
+      this.state.status = "passed";
+      this.state.message =
+        "All inspection steps passed. Save inspection to create the final report.";
+      await this.publish();
+      void this.say(`${announcement ? `${announcement} ` : ""}${this.state.message}`);
+    }
+  }
+  async skipStep() {
+    if (this.busy || ["ready", "report"].includes(this.state.status) || !this.state.procedureId)
+      return;
+    this.busy = true;
+    this.stopSpeech();
+    this.state.operation = "navigate";
+    try {
+      await this.advance();
+    } finally {
+      this.busy = false;
+      this.state.operation = undefined;
+      await this.publish();
+    }
   }
   async publish() {
     this.state.evidence = this.state.evidence.map((item) => this.normalizeEvidence(item));
@@ -209,9 +326,21 @@ export class InspectionController {
       return { ok: false, message: messageOf(error) };
     }
   }
-  async begin() {
-    if (this.busy) {
-      diagnostic("inspection:start", { action: "ignored", reason: "busy" });
+  async begin(workflowId?: string) {
+    if (this.busy) return;
+    if (workflowId && ["ready", "report"].includes(this.state.status)) {
+      const workflow = this.state.workflows?.find((item) => item.id === workflowId);
+      if (!workflow) {
+        this.ports.toast("warning", "Refresh workflows before starting this inspection.");
+        return;
+      }
+      this.state = {
+        ...createSnapshot(this.state.serverUrl, workflow),
+        workflows: this.state.workflows,
+      };
+    }
+    if (!this.state.workflow || !this.state.steps.length) {
+      this.ports.toast("warning", "Select a discovered workflow before starting.");
       return;
     }
     this.ports.openInspection?.();
@@ -243,7 +372,8 @@ export class InspectionController {
     try {
       this.photoPreviews.clear();
       this.state = {
-        ...createSnapshot(this.state.serverUrl),
+        ...createSnapshot(this.state.serverUrl, this.state.workflow),
+        workflows: this.state.workflows,
         status: "recording",
         operation: "start",
         startedAt: Date.now(),
@@ -251,11 +381,11 @@ export class InspectionController {
       };
       await this.publish();
       await this.startVideo();
-      const step = this.state.steps.find((step) => step.id === STEP_ID);
+      const step = this.state.steps.find((step) => step.id === this.state.currentStepId);
       if (!step) throw new Error("Inspection step was not found");
       this.state.message = step.instruction;
       await this.publish();
-      await this.say(this.state.message);
+      void this.say(this.state.message);
     } catch (error) {
       this.ports.toast("error", messageOf(error));
     } finally {
@@ -264,18 +394,39 @@ export class InspectionController {
       await this.publish();
     }
   }
-  async capture(kind: "initial" | "verification", supplied?: Photo) {
-    if (this.busy || this.state.pausedAt || ["ready", "report"].includes(this.state.status)) return;
+  async capture(kind: "initial" | "verification", supplied?: Photo, expectedStepId?: string) {
+    if (expectedStepId && expectedStepId !== this.state.currentStepId) {
+      this.ports.toast(
+        "warning",
+        "The selected step changed. Upload the photo again for the intended step.",
+      );
+      return;
+    }
+    if (
+      !this.state.procedureId ||
+      !this.currentStep ||
+      this.currentStep.state === "passed" ||
+      this.busy ||
+      this.state.pausedAt ||
+      ["ready", "report"].includes(this.state.status)
+    )
+      return;
     this.busy = true;
     this.state.operation = "capture";
     let attempt: Attempt | undefined;
     let resumeRecording = false;
     const previousStatus = this.state.status;
     try {
-      attempt = { id: `${kind}-${Date.now()}`, kind, status: "capturing", createdAt: Date.now() };
+      attempt = {
+        stepId: this.currentStep.id,
+        id: `${kind}-${Date.now()}`,
+        kind,
+        status: "capturing",
+        createdAt: Date.now(),
+      };
       this.state.attempts.push(attempt);
       this.state.steps = this.state.steps.map((step) =>
-        step.id === STEP_ID ? { ...step, state: "current" } : step,
+        step.id === this.state.currentStepId ? { ...step, state: "current" } : step,
       );
       this.state.latestFinding = undefined;
       this.state.pendingPhoto = undefined;
@@ -308,8 +459,9 @@ export class InspectionController {
       const evidence = this.normalizeEvidence(
         await this.request<Evidence>("/api/evidence", {
           ...photo,
+          ...this.identity(),
           attemptId: attempt.id,
-          stepId: STEP_ID,
+          stepId: this.state.currentStepId,
           kind,
         }),
       );
@@ -346,7 +498,7 @@ export class InspectionController {
   }
   async retryCheck() {
     if (this.busy || this.state.status !== "error") return;
-    const attempt = this.state.attempts.at(-1);
+    const attempt = this.currentAttempt;
     if (attempt?.status !== "pending") return;
     this.busy = true;
     this.state.operation = "capture";
@@ -357,8 +509,9 @@ export class InspectionController {
         evidence = this.normalizeEvidence(
           await this.request<Evidence>("/api/evidence", {
             ...attempt.sourcePhoto,
+            ...this.identity(),
             attemptId: attempt.id,
-            stepId: STEP_ID,
+            stepId: this.state.currentStepId,
             kind: attempt.kind,
           }),
         );
@@ -392,13 +545,18 @@ export class InspectionController {
   }
   private async evaluate(attempt: Attempt, evidence: Evidence) {
     this.state.status = "evaluating";
-    this.state.message = "Checking the purge limiter…";
+    this.state.message = `Checking ${this.currentStep?.title || "this step"}…`;
     await this.publish();
     const result = await this.request<EvaluationResponse>("/api/evaluate", {
       evidenceId: evidence.id,
-      stepId: STEP_ID,
+      stepId: evidence.stepId,
+      ...this.identity(),
     });
-    if (!["pass", "adjustment_required", "evidence_unclear"].includes(result.status))
+    if (
+      result.stepId !== evidence.stepId ||
+      result.evidenceId !== evidence.id ||
+      !["pass", "adjustment_required", "evidence_unclear"].includes(result.status)
+    )
       throw new Error("AI returned an invalid evaluation.");
     diagnostic("evaluation:result", {
       status: result.status,
@@ -410,14 +568,17 @@ export class InspectionController {
     this.state.latestFinding = result;
     this.state.status = result.status === "pass" ? "passed" : result.status;
     this.state.steps = this.state.steps.map((step) =>
-      step.id === STEP_ID
+      step.id === this.state.currentStepId
         ? { ...step, state: result.status === "pass" ? "passed" : "current" }
         : step,
     );
     this.state.message =
-      result.status === "pass" ? `Check passed. ${result.finding}` : result.recommendedAction;
+      result.status === "pass"
+        ? `${this.currentStep?.successMessage || "Check passed."} ${result.finding}`
+        : result.recommendedAction;
     await this.publish();
-    await this.say(this.state.message);
+    if (result.status === "pass") await this.advance(this.state.message);
+    else void this.say(this.state.message);
   }
   async ask(question = "What should I do?") {
     if (this.busy || ["ready", "report"].includes(this.state.status)) return;
@@ -431,8 +592,11 @@ export class InspectionController {
         "/api/ask",
         {
           question,
-          stepId: STEP_ID,
-          evidenceId: this.state.evidence.at(-1)?.id,
+          stepId: this.state.currentStepId,
+          evidenceId: [...this.state.evidence]
+            .reverse()
+            .find((e) => e.stepId === this.state.currentStepId)?.id,
+          ...this.identity(),
           latestFinding: this.state.latestFinding,
           asset: this.state.asset,
         },
@@ -444,7 +608,7 @@ export class InspectionController {
         procedureReference: response.procedureReference,
       };
       await this.publish();
-      await this.say(response.answer);
+      void this.say(response.answer);
     } catch {
       this.state.message = "Guidance is unavailable right now. Try again in a moment.";
       await this.publish();
@@ -456,8 +620,9 @@ export class InspectionController {
     }
   }
   async escalate() {
-    if (this.busy || this.state.status === "ready") return;
+    if (this.busy || ["ready", "report"].includes(this.state.status)) return;
     this.busy = true;
+    this.stopSpeech();
     this.state.operation = "escalate";
     await this.publish();
     try {
@@ -471,8 +636,9 @@ export class InspectionController {
         createdAt: Date.now(),
         status: "ready for expert review",
       };
+      if (this.currentStep) this.currentStep.escalation = this.state.escalation;
       await this.publish();
-      await this.say("Escalation saved and ready for expert review.");
+      await this.advance("Escalation saved and ready for expert review.");
       this.ports.toast("success", "Escalation saved. Ready for expert review.");
     } catch {
       this.ports.toast("error", "Escalation could not be saved. Please try again.");
@@ -485,9 +651,8 @@ export class InspectionController {
   async finish(reason?: string) {
     if (this.busy || ["ready", "report"].includes(this.state.status)) return;
     const description = reason?.trim() || this.state.termination?.reason;
-    const checkPassed = this.state.steps.some(
-      (step) => step.id === STEP_ID && step.state === "passed",
-    );
+    const checkPassed =
+      this.state.steps.length > 0 && this.state.steps.every((step) => step.state === "passed");
     if ((!checkPassed || reason !== undefined) && !description) {
       this.ports.requestEndReason?.();
       this.ports.toast("warning", "Describe why the inspection needs to end before continuing.");
@@ -509,7 +674,7 @@ export class InspectionController {
       this.state.message = description
         ? "Inspection ended early. Your reason and evidence have been saved for follow-up."
         : checkPassed
-          ? "Purge limiter inspection complete. Remaining procedure checks are pending."
+          ? "Inspection complete. All steps passed."
           : "Inspection ended with an unresolved check.";
       const reportId = this.state.report?.id || `report-${this.state.startedAt}`;
       const response = await this.request<{ id: string; url: string }>("/api/reports", {
@@ -558,7 +723,11 @@ export class InspectionController {
       }
       this.photoPreviews.clear();
       this.trackedVideos.clear();
-      this.state = createSnapshot(this.state.serverUrl);
+      this.state = {
+        ...createSnapshot(this.state.serverUrl, this.state.workflow),
+        workflows: this.state.workflows,
+      };
+      await this.refreshWorkflows(true);
       await this.publish();
       this.ports.toast("success", "Inspection reset. You can start again.");
     } catch {
@@ -578,6 +747,9 @@ export class InspectionController {
     ];
     this.state.recording = {
       status: "idle",
+      inspectionId: `inspection-${this.state.startedAt}`,
+      clipIndex: history.length + 1,
+      startRequestedAt: Date.now(),
       sessionId: `inspection-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       clips: history,
     };
@@ -608,13 +780,27 @@ export class InspectionController {
     if (!id || !sessionId || !this.ports.stopRecording) return Promise.resolve();
     diagnostic("video:stop-requested", { recordingId: id, sessionId });
     this.state.recording.status = "uploading";
+    this.state.recording.stopRequestedAt = Date.now();
+    const uploadTiming = {
+      inspectionId: this.state.recording.inspectionId,
+      clipIndex: this.state.recording.clipIndex,
+      startRequestedAt: this.state.recording.startRequestedAt,
+      startedAt: this.state.recording.startedAt,
+      stopRequestedAt: this.state.recording.stopRequestedAt,
+      recordingId: id,
+    };
+    const timingQuery = Object.entries(uploadTiming)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`)
+      .join("&");
     this.stoppingRecording = this.ports
       .stopRecording(
         id,
-        `${this.state.serverUrl}/api/video/upload?sessionId=${encodeURIComponent(sessionId)}`,
+        `${this.state.serverUrl}/api/video/upload?sessionId=${encodeURIComponent(sessionId)}&${timingQuery}`,
       )
       .then(async () => {
         this.recordingId = undefined;
+        this.state.recording.stopConfirmedAt = Date.now();
         diagnostic("video:stop-confirmed", { recordingId: id, sessionId });
         await this.publish();
         void this.trackVideo(sessionId);
@@ -644,20 +830,41 @@ export class InspectionController {
         )
           return;
         try {
-          const result = await this.request<{ status: string; latest?: { url: string } }>(
-            `/api/video/status?sessionId=${encodeURIComponent(sessionId)}`,
-          );
+          const result = await this.request<{
+            status: string;
+            latest?: {
+              url: string;
+              durationSeconds?: number | null;
+              durationStatus?: "available" | "unavailable";
+              uploadedAt?: string;
+            };
+          }>(`/api/video/status?sessionId=${encodeURIComponent(sessionId)}`);
           if (result.status === "uploaded") {
+            const clip =
+              this.state.recording.sessionId === sessionId
+                ? this.state.recording
+                : this.state.recording.clips?.find((item) => item.sessionId === sessionId);
+            if (clip?.stopConfirmedAt)
+              await this.request("/api/video/timing", {
+                sessionId,
+                stopConfirmedAt: clip.stopConfirmedAt,
+              });
+            const media = {
+              durationSeconds: result.latest?.durationSeconds,
+              durationStatus: result.latest?.durationStatus,
+              uploadedAt: result.latest?.uploadedAt,
+            };
             if (this.state.recording.sessionId === sessionId)
               this.state.recording = {
                 ...this.state.recording,
+                ...media,
                 status: "uploaded",
                 uploadUrl: result.latest?.url,
               };
             else
               this.state.recording.clips = this.state.recording.clips?.map((clip) =>
                 clip.sessionId === sessionId
-                  ? { ...clip, status: "uploaded", uploadUrl: result.latest?.url }
+                  ? { ...clip, ...media, status: "uploaded", uploadUrl: result.latest?.url }
                   : clip,
               );
             diagnostic("video:uploaded", { sessionId });
@@ -683,22 +890,30 @@ export class InspectionController {
         throw new Error("Use an HTTP or HTTPS server URL.");
       this.state.serverUrl = url.trim().replace(/\/$/, "");
       await this.publish();
+      await this.refreshWorkflows();
     } catch (error) {
       this.ports.toast("error", messageOf(error));
     }
   }
+  private stopSpeech() {
+    this.speechId++;
+    this.speaking = false;
+    this.ports.stopSpeech?.();
+  }
   async say(text: string) {
     if (this.state.pausedAt) return;
+    const speechId = ++this.speechId;
     this.speaking = true;
     try {
       await this.ports.speak(text);
     } catch {
-      this.ports.toast(
-        "warning",
-        "Spoken guidance is unavailable. Follow the instructions on screen.",
-      );
+      if (speechId === this.speechId)
+        this.ports.toast(
+          "warning",
+          "Spoken guidance is unavailable. Follow the instructions on screen.",
+        );
     } finally {
-      this.speaking = false;
+      if (speechId === this.speechId) this.speaking = false;
     }
   }
   async transcript(text: string) {
@@ -709,6 +924,11 @@ export class InspectionController {
       .replace(/[.!?,;:]+$/, "")
       .replace(/^(?:please\s+|hey[, ]+)?/, "");
     const knownCommand = [
+      "skip",
+      "skip step",
+      "next step",
+      "go back",
+      "previous step",
       "start inspection",
       "verify",
       "capture",
@@ -718,7 +938,11 @@ export class InspectionController {
       "finish inspection",
     ].includes(command);
     const now = Date.now();
-    if (this.speaking || (text === this.lastCommand && now - this.lastCommandAt < 2000)) {
+    const interruptCommand = ["skip", "skip step", "next step", "escalate"].includes(command);
+    if (
+      (this.speaking && !interruptCommand) ||
+      (text === this.lastCommand && now - this.lastCommandAt < 2000)
+    ) {
       if (knownCommand)
         diagnostic("voice:command", {
           command,
@@ -740,8 +964,17 @@ export class InspectionController {
     if (command === "start inspection") await this.begin();
     else if (command === "verify") await this.capture("verification");
     else if (["capture", "take a photo", "capture evidence"].includes(command))
-      await this.capture(this.state.evidence.length ? "verification" : "initial");
-    else if (command === "escalate") await this.escalate();
+      await this.capture(
+        this.state.evidence.some((e) => e.stepId === this.state.currentStepId)
+          ? "verification"
+          : "initial",
+      );
+    else if (["skip", "skip step", "next step"].includes(command)) await this.skipStep();
+    else if (["go back", "previous step"].includes(command)) {
+      const index = this.state.steps.findIndex((s) => s.id === this.state.currentStepId);
+      const previous = this.state.steps[index - 1];
+      if (previous) await this.selectStep(previous.id);
+    } else if (command === "escalate") await this.escalate();
     else if (command === "finish inspection") await this.finish();
     else if (command.startsWith("what ") || command.startsWith("how ")) await this.ask(text);
   }

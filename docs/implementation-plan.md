@@ -6,7 +6,21 @@ physical Live validation checks passed on the tested setup. The plan below
 records the original scope and contracts; its implementation gates are
 historical rather than outstanding work.
 
-## First vertical slice
+## Generic workflow implementation (2026-09-14)
+
+The single-step scope below is historical and is superseded by the maintainer's
+workflow interview. The server now discovers workflow JSON files. Printer
+inspection includes purge limiter, panel lubrication status, and build plate;
+workstation readiness is a second sample. Every configured step is executable
+as a photo check. Passing advances; skipping defers; escalation leaves the step
+unfinished and advances. Arbitrary step selection is supported. At the end,
+navigation wraps to earlier unfinished steps. Only all-passed inspections are
+complete. Autosave and pause/resume remain; early end requires a reason.
+See [workflow authoring](workflows.md) for the implemented contract. Newly added
+checks have not been validated with upstream AI or physical glasses in this
+change; reference photos for lubrication and build plate are still forthcoming.
+
+## First vertical slice (historical)
 
 Asset A1M-0042 is a Bambu Lab A1 mini. Technician: Sample technician. Implement one complete
 inspection of the added **purge limiter**. Show the other procedure steps as

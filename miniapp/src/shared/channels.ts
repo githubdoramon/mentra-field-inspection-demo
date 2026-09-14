@@ -7,7 +7,11 @@ export interface Channels {
   "inspection:toast": { kind: "info" | "success" | "warning" | "error"; text: string };
   "inspection:request-snapshot": Record<string, never>;
   "inspection:show-inspection": Record<string, never>;
-  "inspection:start": Record<string, never>;
+  "inspection:refresh-workflows": Record<string, never>;
+  "inspection:select-workflow": { id: string };
+  "inspection:select-step": { id: string };
+  "inspection:skip-step": Record<string, never>;
+  "inspection:start": { workflowId?: string };
   "inspection:pause": Record<string, never>;
   "inspection:capture": { kind: "initial" | "verification" };
   "inspection:retry-check": Record<string, never>;
@@ -20,6 +24,7 @@ export interface Channels {
   "inspection:health": Rpc<Record<string, never>, ServerHealth>;
   "inspection:report": Rpc<Record<string, never>, InspectionSnapshot>;
   "inspection:upload": {
+    stepId: string;
     kind: "initial" | "verification";
     photo: { photoUrl: string; mimeType: string };
   };

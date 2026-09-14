@@ -1,0 +1,63 @@
+{
+  "procedureId": "workstation-readiness-v1",
+  "version": 1,
+  "title": "Workstation readiness",
+  "workOrder": {
+    "id": "WO-DEMO-02",
+    "location": "Demo workstation",
+    "status": "scheduled"
+  },
+  "asset": {
+    "id": "BENCH-002",
+    "name": "Assembly workstation",
+    "technician": "Sample technician"
+  },
+  "steps": [
+    {
+      "stepId": "clear-surface",
+      "title": "Check work surface",
+      "instruction": "Inspect the work surface for clutter and obstructions.",
+      "captureInstruction": "Frame all required items clearly in one photo.",
+      "visualCriteria": [
+        "The full work surface is visible.",
+        "A clear central working area is available without loose debris or unrelated clutter."
+      ],
+      "limitations": [
+        "Visible presence does not establish tool condition, supply suitability, or workplace safety."
+      ],
+      "successMessage": "Check work surface passed.",
+      "references": []
+    },
+    {
+      "stepId": "required-tools",
+      "title": "Check required tools",
+      "instruction": "Arrange a hex-key set, a screwdriver, and side cutters so each is visible.",
+      "captureInstruction": "Frame all required items clearly in one photo.",
+      "visualCriteria": [
+        "A hex-key set is visible.",
+        "A screwdriver is visible.",
+        "Side cutters are visible."
+      ],
+      "limitations": [
+        "Visible presence does not establish tool condition, supply suitability, or workplace safety."
+      ],
+      "successMessage": "Check required tools passed.",
+      "references": []
+    },
+    {
+      "stepId": "supplies",
+      "title": "Check supplies",
+      "instruction": "Show an available filament spool and a cleaning cloth.",
+      "captureInstruction": "Frame all required items clearly in one photo.",
+      "visualCriteria": [
+        "A filament spool with visible filament is present.",
+        "A cleaning cloth is present."
+      ],
+      "limitations": [
+        "Visible presence does not establish tool condition, supply suitability, or workplace safety."
+      ],
+      "successMessage": "Check supplies passed.",
+      "references": []
+    }
+  ]
+}

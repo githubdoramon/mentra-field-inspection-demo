@@ -5,10 +5,11 @@ export interface ProcedureStep {
   stepId: string;
   title: string;
   instruction: string;
-  status: string;
+  captureInstruction?: string;
+  successMessage?: string;
   visualCriteria?: string[];
   limitations?: string[];
-  references?: { loose: string; seated: string };
+  references?: Array<{ role: "good" | "bad"; path: string; caption: string }>;
 }
 
 export interface Procedure {
@@ -21,6 +22,8 @@ export interface Procedure {
 }
 
 export interface EvidenceRecord {
+  procedureId: string;
+  procedureVersion: number;
   id: string;
   attemptId: string;
   stepId: string;

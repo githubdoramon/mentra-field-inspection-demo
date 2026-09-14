@@ -5,7 +5,9 @@ import {
 } from "@mentra/miniapp-cli/build-helpers";
 
 await rm("./dist", { recursive: true, force: true });
-const define: Record<string, string> = {};
+const define: Record<string, string> = {
+  __MENTRA_SERVER_URL__: JSON.stringify(process.env.MENTRA_PUBLIC_SERVER_URL) || "undefined",
+};
 for (const [key, value] of Object.entries(process.env)) {
   if (key.startsWith("MENTRA_PUBLIC_") && typeof value === "string")
     define[`process.env.${key}`] = JSON.stringify(value);

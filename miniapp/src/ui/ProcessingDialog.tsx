@@ -72,14 +72,14 @@ export function PhotoPreview({
 const STAGE_COPY: Record<ProcessingStage, { title: string; description: string }> = {
   capturing: {
     title: "Taking your photo…",
-    description: "Frame the purge limiter and hold still for a moment.",
+    description: "Frame the inspection subject and hold still for a moment.",
   },
   archiving: {
     title: "Preparing your photo…",
     description: "Your photo is ready. We’re getting it ready for the inspection.",
   },
   evaluating: {
-    title: "Checking the purge limiter…",
+    title: "Checking your photo…",
     description: "Checking the photo against the inspection criteria.",
   },
 };

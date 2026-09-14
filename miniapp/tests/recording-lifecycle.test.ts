@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { testSnapshot } from "./fixtures";
 import { InspectionController, type Ports } from "../src/shared/controller";
 
 function recorder(startRecording?: Ports["startRecording"], overrides: Partial<Ports> = {}) {
@@ -19,13 +20,20 @@ function recorder(startRecording?: Ports["startRecording"], overrides: Partial<P
     },
     ...overrides,
   });
+  controller.state = testSnapshot();
   controller.request = async <T>(path: string, body?: unknown): Promise<T> => {
+    if (path === "/api/video/timing") return body as T;
     if (path.startsWith("/api/video/status"))
       return { status: "uploaded", latest: { url: "http://laptop/clip.mp4" } } as T;
     if (path === "/api/reports") return { id: "report", url: "http://laptop/report" } as T;
     if (path === "/api/evidence") return { ...(body as object), id: "photo", archived: true } as T;
     if (path === "/api/evaluate")
-      return { status: "evidence_unclear", finding: "Retake photo" } as T;
+      return {
+        status: "evidence_unclear",
+        finding: "Retake photo",
+        evidenceId: "photo",
+        stepId: (body as { stepId: string }).stepId,
+      } as T;
     throw new Error(`Unexpected request: ${path}`);
   };
   return { controller, stops };
@@ -71,6 +79,7 @@ test("photo waits for recording stop confirmation, then resumes a new clip befor
     },
   });
   const request = controller.request.bind(controller);
+  controller.state = testSnapshot();
   controller.request = async <T>(path: string, body?: unknown): Promise<T> => {
     if (path === "/api/evaluate") expect(controller.state.recording.recordingId).toBe("clip-2");
     return request<T>(path, body);
@@ -185,4 +194,24 @@ test("reset clears the phone snapshot, stops the active recording, and keeps the
   expect(controller.state.attempts).toEqual([]);
   expect(controller.state.serverUrl).toBe("http://laptop:8787");
   expect(controller.state.currentStepId).toBe("purge-limiter");
+});
+
+test("clip timing and ordering survive capture gaps and reach the native upload URL", async () => {
+  const { controller, stops } = recorder(undefined, {
+    capture: async () => ({ photoUrl: "http://example.test/photo", mimeType: "image/jpeg" }),
+  });
+  await controller.begin();
+  const first = { ...controller.state.recording };
+  await controller.capture("initial");
+  const old = controller.state.recording.clips?.[0];
+  expect(old?.startRequestedAt).toBeLessThanOrEqual(old?.startedAt as number);
+  expect(old?.startedAt).toBeLessThanOrEqual(old?.stopRequestedAt as number);
+  expect(old?.stopRequestedAt).toBeLessThanOrEqual(old?.stopConfirmedAt as number);
+  expect(controller.state.recording.clipIndex).toBe(2);
+  expect(controller.state.recording.inspectionId).toBe(first.inspectionId);
+  const url = new URL(stops[0].url);
+  expect(url.searchParams.get("inspectionId")).toBe(first.inspectionId);
+  expect(url.searchParams.get("clipIndex")).toBe("1");
+  expect(Number(url.searchParams.get("startedAt"))).toBe(first.startedAt);
+  await controller.pause();
 });

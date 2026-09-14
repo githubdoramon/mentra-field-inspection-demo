@@ -23,6 +23,9 @@ export function installBrowserBridge(): boolean {
     capture: async () => {
       throw new Error("Photo capture requires connected glasses inside MentraOS.");
     },
+    stopSpeech: () => {
+      if ("speechSynthesis" in window) speechSynthesis.cancel();
+    },
     speak: async (text) => {
       if (!("speechSynthesis" in window)) return;
       speechSynthesis.cancel();
@@ -39,6 +42,9 @@ export function installBrowserBridge(): boolean {
   const bridge = {
     send(channel: string, payload: unknown) {
       const data = payload as {
+        id?: string;
+        stepId?: string;
+        workflowId?: string;
         kind?: "initial" | "verification";
         photo?: Photo;
         question?: string;
@@ -46,13 +52,19 @@ export function installBrowserBridge(): boolean {
         reason?: string;
       };
       if (channel === "inspection:request-snapshot") run(() => controller.publish());
-      else if (channel === "inspection:start") run(() => controller.begin());
+      else if (channel === "inspection:refresh-workflows") run(() => controller.refreshWorkflows());
+      else if (channel === "inspection:select-workflow")
+        run(() => controller.selectWorkflow(data.id || ""));
+      else if (channel === "inspection:select-step")
+        run(() => controller.selectStep(data.id || ""));
+      else if (channel === "inspection:skip-step") run(() => controller.skipStep());
+      else if (channel === "inspection:start") run(() => controller.begin(data.workflowId));
       else if (channel === "inspection:pause") run(() => controller.pause());
       else if (channel === "inspection:capture")
         run(() => controller.capture(data.kind || "initial"));
       else if (channel === "inspection:retry-check") run(() => controller.retryCheck());
       else if (channel === "inspection:upload")
-        run(() => controller.capture(data.kind || "initial", data.photo));
+        run(() => controller.capture(data.kind || "initial", data.photo, data.stepId));
       else if (channel === "inspection:ask") run(() => controller.ask(data.question));
       else if (channel === "inspection:escalate") run(() => controller.escalate());
       else if (channel === "inspection:finish") run(() => controller.finish(data.reason));

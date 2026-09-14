@@ -1,12 +1,12 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
-  "packageName": "tech.ramon.inspection",
+  "packageName": "tech.ramon.fieldinspection",
   "version": "0.1.0",
   "name": "Field Inspection",
   "description": "Glasses-first guided inspection for field service work.",
   "type": "background",
   "sdkVersion": "3.2.0-dev.227",
-  "icon": "./public/field-inspection-logo.png",
+  "icon": "./public/app_logo.png",
   "entry": {
     "background": "background/index.js",
     "ui": "ui/index.html"

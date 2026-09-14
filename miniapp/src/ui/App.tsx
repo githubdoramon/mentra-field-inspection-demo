@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -25,7 +25,7 @@ import ImageViewer from "./ImageViewer";
 import EndInspectionDialog from "./EndInspectionDialog";
 import ResetInspectionDialog from "./ResetInspectionDialog";
 import ProcessingDialog, { PhotoPreview } from "./ProcessingDialog";
-import { createSnapshot, STEP_ID } from "../shared/workflow";
+import { createSnapshot } from "../shared/workflow";
 import type { InspectionSnapshot, ProcedureStep } from "../shared/types";
 
 export const DEFAULT = createSnapshot();
@@ -51,7 +51,6 @@ export default function App({ browserMode = false }: { browserMode?: boolean }) 
   const [health, setHealth] = useState<string | null>(null);
   const [view, setView] = useState<"queue" | "inspection" | "report">("queue");
   const [endReasonRequested, setEndReasonRequested] = useState(false);
-  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [headerScrolled, setHeaderScrolled] = useState(false);
 
   useEffect(() => {
@@ -75,7 +74,6 @@ export default function App({ browserMode = false }: { browserMode?: boolean }) 
     });
     const offShowInspection = mentra.on("inspection:show-inspection", () => {
       setView("inspection");
-      setSelectedStepId(null);
     });
     mentra.send("inspection:request-snapshot", {});
     return () => {
@@ -90,17 +88,10 @@ export default function App({ browserMode = false }: { browserMode?: boolean }) 
     const timer = window.setTimeout(() => setToast(null), 4200);
     return () => window.clearTimeout(timer);
   }, [toast]);
-  const passed = snapshot.steps.some((step) => step.id === STEP_ID && step.state === "passed");
-  useEffect(() => {
-    if (passed) setSelectedStepId(null);
-  }, [passed]);
-  const nextPending = snapshot.steps.find((step) => step.state === "pending");
-  const current = useMemo(() => {
-    if (selectedStepId)
-      return snapshot.steps.find((step) => step.id === selectedStepId) ?? nextPending;
-    if (passed) return nextPending ?? snapshot.steps.find((step) => step.id === STEP_ID);
-    return snapshot.steps.find((step) => step.id === snapshot.currentStepId) ?? snapshot.steps[0];
-  }, [nextPending, passed, selectedStepId, snapshot.currentStepId, snapshot.steps]);
+  const passed =
+    snapshot.steps.length > 0 && snapshot.steps.every((step) => step.state === "passed");
+  const current =
+    snapshot.steps.find((step) => step.id === snapshot.currentStepId) ?? snapshot.steps.at(-1);
   const latestAttempt = snapshot.attempts.at(-1);
   const latestEvidence = latestAttempt?.evidenceId
     ? snapshot.evidence.find((item) => item.id === latestAttempt.evidenceId)
@@ -116,10 +107,14 @@ export default function App({ browserMode = false }: { browserMode?: boolean }) 
   const goInspection = () => {
     resumeRequested.current = true;
     setView("inspection");
-    setSelectedStepId(null);
     mentra.send("inspection:start", {});
   };
   const start = goInspection;
+  const startWorkflow = (workflowId: string) => {
+    resumeRequested.current = true;
+    setView("inspection");
+    mentra.send("inspection:start", { workflowId });
+  };
   const leaveInspection = () => {
     resumeRequested.current = false;
     if (view === "inspection") mentra.send("inspection:pause", {});
@@ -196,7 +191,11 @@ export default function App({ browserMode = false }: { browserMode?: boolean }) 
     >
       <MiniappHeader
         className={`topbar ${headerScrolled ? "topbar-scrolled" : ""}`}
-        style={{ top: headerStickTop }}
+        style={{
+          top: headerStickTop,
+          height: (capsuleMenu?.height ?? 42) + (headerScrolled ? 10 : 0),
+          paddingBottom: headerScrolled ? 10 : 0,
+        }}
         left={
           <button
             type="button"
@@ -206,9 +205,9 @@ export default function App({ browserMode = false }: { browserMode?: boolean }) 
           >
             <span className="brand-mark">
               <img
-                width={24}
-                height={24}
-                src="../../public/field-inspection.png"
+                width={36}
+                height={36}
+                src="../../public/app_logo.png"
                 alt="Field inspection"
               />
             </span>
@@ -308,7 +307,7 @@ export default function App({ browserMode = false }: { browserMode?: boolean }) 
       {view === "queue" && (
         <Queue
           snapshot={snapshot}
-          onStart={start}
+          onStart={startWorkflow}
           onResume={goInspection}
           onReport={() => setView("report")}
         />
@@ -316,6 +315,7 @@ export default function App({ browserMode = false }: { browserMode?: boolean }) 
       {view === "inspection" && (
         <Inspection
           snapshot={snapshot}
+          browserMode={browserMode}
           current={current}
           passed={passed}
           pendingPhoto={snapshot.pendingPhoto}
@@ -323,7 +323,7 @@ export default function App({ browserMode = false }: { browserMode?: boolean }) 
           setQuestion={setQuestion}
           onAsk={ask}
           onFinish={(reason) => mentra.send("inspection:finish", { reason })}
-          onSelect={setSelectedStepId}
+          onSelect={(id) => mentra.send("inspection:select-step", { id })}
           onBack={leaveInspection}
           requestEndReason={endReasonRequested}
           onEndPromptHandled={() => setEndReasonRequested(false)}
@@ -362,12 +362,15 @@ function Queue({
   onReport,
 }: {
   snapshot: InspectionSnapshot;
-  onStart: () => void;
+  onStart: (id: string) => void;
   onResume: () => void;
   onReport: () => void;
 }) {
   const active = snapshot.status !== "ready" && snapshot.status !== "report";
   const saved = snapshot.status === "report" || Boolean(snapshot.report);
+  const workflows = [...(snapshot.workflows || [])];
+  if (snapshot.workflow && !workflows.some((workflow) => workflow.id === snapshot.procedureId))
+    workflows.unshift(snapshot.workflow);
   return (
     <section className="queue-page">
       <div className="queue-intro">
@@ -377,77 +380,95 @@ function Queue({
           <p className="lede">Choose an inspection to begin.</p>
         </div>
       </div>
-      <article className="task-card panel">
-        <div className="task-card-main">
-          <div className="task-topline">
-            <span className="task-kind">
-              <Gauge size={15} />
-              Inspection
-            </span>
-            <span className={`task-state ${active ? "active" : saved ? "saved" : "ready"}`}>
-              {active ? "In progress" : saved ? "Saved" : "Ready"}
-            </span>
-          </div>
-          <h2>{snapshot.asset.model}</h2>
-          <p className="task-meta">
-            {snapshot.asset.id}
-            <span>•</span>
-            {snapshot.workOrder}
-            <span>•</span>
-            {snapshot.asset.location}
-          </p>
-          <div className="task-divider" />
-          <div className="task-detail">
-            <div>
-              <strong>Printer condition & function</strong>
-              <small>Component fit and condition, movement, and a test print.</small>
-            </div>
-            <span className="task-number">{snapshot.steps.length} steps</span>
-          </div>
-        </div>
-        <div className="task-actions">
-          {active ? (
-            <button
-              type="button"
-              className="button primary large"
-              onClick={onResume}
+      <div className="workflow-cards">
+        {workflows.map((workflow) => {
+          const current = workflow.id === snapshot.procedureId;
+          const inProgress = current && active;
+          const reported = current && saved;
+          return (
+            <article
+              className="task-card panel"
+              key={workflow.id}
             >
-              Resume inspection
-              <ArrowRight size={15} />
-            </button>
-          ) : saved ? (
-            <button
-              type="button"
-              className="button primary large"
-              onClick={onReport}
-            >
-              View saved report
-              <FileCheck2 size={15} />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="button primary large"
-              onClick={onStart}
-            >
-              Start inspection
-              <Play
-                size={14}
-                fill="currentColor"
-              />
-            </button>
-          )}
-        </div>
-      </article>
-      <p className="queue-note">
-        {active ? "Your progress is saved as you work." : "Only assigned inspections appear here."}
-      </p>
+              <div className="task-card-main">
+                <div className="task-topline">
+                  <span className="task-kind">
+                    <Gauge size={15} />
+                    Inspection
+                  </span>
+                  <span
+                    className={`task-state ${inProgress ? "active" : reported ? "saved" : "ready"}`}
+                  >
+                    {inProgress ? "In progress" : reported ? "Saved" : "Ready"}
+                  </span>
+                </div>
+                <h2>{workflow.title}</h2>
+                <p className="task-meta">
+                  {workflow.asset.name}
+                  <span>•</span>
+                  {workflow.asset.id}
+                </p>
+                <p className="task-meta">
+                  {workflow.workOrder.id}
+                  <span>•</span>
+                  {workflow.workOrder.location}
+                </p>
+                <div className="task-divider" />
+                <div className="task-detail">
+                  <div>
+                    <strong>{workflow.asset.name}</strong>
+                    <small>{workflow.steps.map((step) => step.title).join(" · ")}</small>
+                  </div>
+                  <span className="task-number">{workflow.steps.length} steps</span>
+                </div>
+              </div>
+              <div className="task-actions">
+                <button
+                  type="button"
+                  className="button primary large"
+                  disabled={Boolean(snapshot.operation) || (active && !current)}
+                  onClick={() =>
+                    inProgress ? onResume() : reported ? onReport() : onStart(workflow.id)
+                  }
+                >
+                  {inProgress
+                    ? "Resume inspection"
+                    : reported
+                      ? "View saved report"
+                      : "Start inspection"}
+                  {inProgress ? (
+                    <ArrowRight size={15} />
+                  ) : reported ? (
+                    <FileCheck2 size={15} />
+                  ) : (
+                    <Play
+                      size={14}
+                      fill="currentColor"
+                    />
+                  )}
+                </button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+      {!workflows.length && (
+        <p className="queue-note">
+          No workflows loaded. Connect to the companion server and refresh.
+        </p>
+      )}
+      {active && (
+        <p className="queue-note">
+          Your progress is saved as you work. Resume the active inspection before starting another.
+        </p>
+      )}
     </section>
   );
 }
 
 function Inspection({
   snapshot,
+  browserMode,
   current,
   passed,
   pendingPhoto,
@@ -461,6 +482,7 @@ function Inspection({
   onEndPromptHandled,
 }: {
   snapshot: InspectionSnapshot;
+  browserMode: boolean;
   current?: ProcedureStep;
   passed: boolean;
   pendingPhoto?: NonNullable<InspectionSnapshot["pendingPhoto"]>;
@@ -482,17 +504,22 @@ function Inspection({
       onEndPromptHandled();
     }
   }, [requestEndReason, onEndPromptHandled]);
-  const referenceUrl = current?.references?.seated
-    ? snapshot.serverUrl.replace(/\/$/, "") + current.references.seated
+  const [selectedReference, setSelectedReference] = useState<{
+    url: string;
+    caption: string;
+  } | null>(null);
+  const referenceUrl = selectedReference
+    ? snapshot.serverUrl.replace(/\/$/, "") + selectedReference.url
     : undefined;
-  const isPurge = current?.id === STEP_ID;
-  const activeCheck = isPurge && !passed;
+  const activeCheck = Boolean(current) && current?.state !== "passed";
   const busy =
     Boolean(snapshot.operation) || ["ready", "capturing", "evaluating"].includes(snapshot.status);
-  const initial = snapshot.evidence.find((item) => item.kind === "initial");
+  const initial = snapshot.evidence.find(
+    (item) => item.stepId === current?.id && item.kind === "initial",
+  );
   const verification = [...snapshot.evidence]
     .reverse()
-    .find((item) => item.kind === "verification");
+    .find((item) => item.stepId === current?.id && item.kind === "verification");
   const captureTitle =
     snapshot.status === "evaluating"
       ? "Checking your photo…"
@@ -500,11 +527,8 @@ function Inspection({
         ? "Preparing your photo…"
         : "Press the button on your glasses";
   const captureDescription =
-    snapshot.status === "adjustment_required"
-      ? "After adjusting the purge limiter, frame the mounting slot and press once for a fresh photo."
-      : snapshot.status === "evidence_unclear"
-        ? "Keep the mounting slot clearly visible, then press once to take a clearer photo."
-        : "Frame the green purge limiter with the mounting slot clearly visible, then press once to capture.";
+    current?.captureInstruction ||
+    "Frame the inspection subject clearly and press once to capture.";
   const usefulMessage =
     snapshot.message &&
     snapshot.message !== current?.instruction &&
@@ -533,7 +557,7 @@ function Inspection({
       {exampleOpen && referenceUrl && (
         <ImageViewer
           src={referenceUrl}
-          alt="Reference: green purge limiter correctly seated with gray mount in its cutout"
+          alt={selectedReference?.caption || "Inspection reference"}
           onClose={() => setExampleOpen(false)}
         />
       )}
@@ -610,6 +634,7 @@ function Inspection({
                 type="button"
                 className={`step-row ${step.id === current?.id ? "selected" : ""}`}
                 key={step.id}
+                disabled={busy}
                 onClick={() => onSelect(step.id)}
                 aria-current={step.id === current?.id ? "step" : undefined}
               >
@@ -636,21 +661,6 @@ function Inspection({
           </div>
         </aside>
         <div className="inspection-main">
-          {passed && !isPurge && (
-            <div className="completed-note">
-              <Check size={18} />
-              <span>
-                <strong>Purge limiter check complete</strong>
-                <small>Your progress and photos are ready to save.</small>
-              </span>
-              <button
-                type="button"
-                onClick={() => onSelect(STEP_ID)}
-              >
-                View check
-              </button>
-            </div>
-          )}
           <article className="focus-card panel">
             <div className="focus-heading">
               <div>
@@ -669,42 +679,48 @@ function Inspection({
                 <p>{current?.instruction}</p>
               </div>
             </div>
-            {isPurge && (
+            {current && (
               <>
                 <div className="criteria">
-                  <p className="eyebrow">CORRECT FIT</p>
+                  <p className="eyebrow">ACCEPTANCE CRITERIA</p>
                   <div>
-                    <span>
-                      <Check size={14} />
-                      Green piece aligned
-                    </span>
-                    <span>
-                      <Check size={14} />
-                      Gray mount engaged
-                    </span>
-                    <span>
-                      <Check size={14} />
-                      No visible gap
-                    </span>
+                    {current.visualCriteria?.map((criterion) => (
+                      <span key={criterion}>
+                        <Check size={14} />
+                        {criterion}
+                      </span>
+                    ))}
                   </div>
                 </div>
-                {referenceUrl && (
+                {current.limitations?.map((limitation) => (
+                  <p
+                    className="reference-limitation"
+                    key={limitation}
+                  >
+                    {limitation}
+                  </p>
+                ))}
+                {current.references?.map((reference) => (
                   <button
                     type="button"
+                    key={reference.url}
                     className="reference-thumbnail"
-                    onClick={() => setExampleOpen(true)}
-                    aria-label="Enlarge correct-fit example"
+                    onClick={() => {
+                      setSelectedReference(reference);
+                      setExampleOpen(true);
+                    }}
+                    aria-label={`Enlarge ${reference.role} example: ${reference.caption}`}
                   >
                     <img
-                      src={referenceUrl}
-                      alt="Green purge limiter correctly seated"
+                      src={snapshot.serverUrl.replace(/\/$/, "") + reference.url}
+                      alt={reference.caption}
                     />
                     <span>
-                      <strong>Correct-fit example</strong>
-                      <small>Server connection required · tap to enlarge</small>
+                      <strong>{reference.role === "good" ? "Good example" : "Bad example"}</strong>
+                      <small>{reference.caption}</small>
                     </span>
                   </button>
-                )}
+                ))}
                 <div className="evidence-grid">
                   {initial && (
                     <EvidenceCard
@@ -754,9 +770,37 @@ function Inspection({
               </>
             )}
             <div className="focus-actions">
+              {browserMode && activeCheck && (
+                <label className={`button quiet large image-upload ${busy ? "disabled" : ""}`}>
+                  Upload inspection photo
+                  <input
+                    type="file"
+                    accept="image/*"
+                    disabled={busy}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      if (!file) return;
+                      const stepId = current?.id;
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        if (typeof reader.result === "string" && snapshot.currentStepId === stepId)
+                          mentra.send("inspection:upload", {
+                            stepId: stepId || "",
+                            kind: initial ? "verification" : "initial",
+                            photo: { photoUrl: reader.result, mimeType: file.type || "image/jpeg" },
+                          });
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                </label>
+              )}
+
               {activeCheck &&
                 snapshot.status === "error" &&
-                snapshot.attempts.at(-1)?.status === "pending" && (
+                [...snapshot.attempts].reverse().find((attempt) => attempt.stepId === current?.id)
+                  ?.status === "pending" && (
                   <button
                     type="button"
                     className="button quiet large"
@@ -767,14 +811,15 @@ function Inspection({
                     <ArrowRight size={16} />
                   </button>
                 )}
-              {!isPurge && !passed && (
+              {activeCheck && (
                 <button
                   type="button"
                   className="button quiet large"
-                  onClick={() => onSelect(STEP_ID)}
+                  disabled={busy}
+                  onClick={() => mentra.send("inspection:skip-step", {})}
                 >
-                  Return to current check
-                  <ArrowLeft size={16} />
+                  Skip for now
+                  <ArrowRight size={16} />
                 </button>
               )}
               {passed && (
@@ -788,7 +833,7 @@ function Inspection({
                   {snapshot.operation === "finish" ? "Saving…" : "Save inspection"}
                 </button>
               )}
-              {isPurge && (
+              {current && (
                 <div className="ask-row">
                   <input
                     value={question}
@@ -798,7 +843,7 @@ function Inspection({
                       if (event.key === "Enter" && !busy) onAsk();
                     }}
                     placeholder="Need help with this step?"
-                    aria-label="Question about purge limiter"
+                    aria-label={`Question about ${current?.title || "this step"}`}
                   />
                   <button
                     type="button"
@@ -813,21 +858,22 @@ function Inspection({
               )}
             </div>
           </article>
-          {snapshot.escalation?.url ? (
+          {current?.escalation?.url && (
             <a
-              className="escalate-button"
-              href={snapshot.escalation.url}
+              className="button quiet escalation-package"
+              href={current.escalation.url}
               target="_blank"
               rel="noreferrer"
             >
               <ShieldAlert size={20} />
               <span>
                 <strong>Escalation ready for review</strong>
-                <small>View the saved inspection details</small>
+                <small>View this step’s saved package</small>
               </span>
               <ChevronRight size={20} />
             </a>
-          ) : (
+          )}
+          {activeCheck && (
             <button
               type="button"
               className="escalate-button"
@@ -841,7 +887,7 @@ function Inspection({
                     ? "Saving escalation…"
                     : "Escalate to an expert"}
                 </strong>
-                <small>Save your findings and evidence for review</small>
+                <small>Save evidence for review and continue to the next step</small>
               </span>
               <ChevronRight size={20} />
             </button>
@@ -863,7 +909,7 @@ function EvidenceCard({
     <figure className="evidence">
       <PhotoPreview
         src={evidence.previewDataUrl || evidence.photoUrl}
-        alt={`${label} purge limiter evidence`}
+        alt={`${label} evidence`}
         unavailable="Photo preview unavailable"
       />
       <figcaption>
@@ -938,8 +984,8 @@ function Report({
           <h1>{passed === snapshot.steps.length ? "Inspection complete" : "Inspection saved"}</h1>
           <p className="lede">{snapshot.message}</p>
         </div>
-        <div className={`report-seal ${passed ? "pass" : "review"}`}>
-          {passed ? <Check size={28} /> : <CircleAlert size={27} />}
+        <div className={`report-seal ${passed === snapshot.steps.length ? "pass" : "review"}`}>
+          {passed === snapshot.steps.length ? <Check size={28} /> : <CircleAlert size={27} />}
           <small>{passed === snapshot.steps.length ? "PASS" : "SAVED"}</small>
         </div>
       </div>
@@ -968,6 +1014,15 @@ function Report({
               </span>
               <strong>{step.title}</strong>
               <small>{step.state === "passed" ? "Complete" : "Pending"}</small>
+              {step.escalation?.url && (
+                <a
+                  href={step.escalation.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Escalation package
+                </a>
+              )}
             </div>
           ))}
         </section>
@@ -985,7 +1040,7 @@ function Report({
               <EvidenceCard
                 key={item.id}
                 evidence={item}
-                label={item.kind === "verification" ? "After" : "Before"}
+                label={`${snapshot.steps.find((step) => step.id === item.stepId)?.title || item.stepId} · ${item.kind === "verification" ? "Verification" : "Initial"}`}
               />
             ))}
           </div>

@@ -1,3 +1,4 @@
+import { configuredServerUrl } from "../shared/server-url";
 import { registerMiniapp } from "@mentra/miniapp/background";
 import { InspectionController } from "../shared/controller";
 import type { Channels } from "../shared/channels";
@@ -137,13 +138,14 @@ registerMiniapp<Channels>((session) => {
         throw error;
       }
     },
+    stopSpeech: () => session.speaker.stop(),
     speak: async (text) => {
       await session.speaker.speak(text, { stopOtherAudio: true });
     },
     startRecording: () => session.camera.startVideoRecording({ fps: 30, save: true, sound: true }),
     stopRecording: (id, uploadUrl) => session.camera.stopVideoRecording(id, { uploadUrl }),
   });
-  const ready = controller.init();
+  const ready = controller.init(configuredServerUrl, true);
   const run = (action: () => Promise<unknown>) => {
     void ready
       .then(() => (active ? action() : undefined))
@@ -156,7 +158,11 @@ registerMiniapp<Channels>((session) => {
       });
   };
   session.ui.on("inspection:request-snapshot", () => run(() => controller.publish()));
-  session.ui.on("inspection:start", () => run(() => controller.begin()));
+  session.ui.on("inspection:refresh-workflows", () => run(() => controller.refreshWorkflows()));
+  session.ui.on("inspection:select-workflow", ({ id }) => run(() => controller.selectWorkflow(id)));
+  session.ui.on("inspection:select-step", ({ id }) => run(() => controller.selectStep(id)));
+  session.ui.on("inspection:skip-step", () => run(() => controller.skipStep()));
+  session.ui.on("inspection:start", ({ workflowId }) => run(() => controller.begin(workflowId)));
   session.ui.on("inspection:pause", () => {
     void controller
       .pause()
@@ -221,7 +227,13 @@ registerMiniapp<Channels>((session) => {
       void ready
         .then(() =>
           active
-            ? controller.capture(controller.state.evidence.length ? "verification" : "initial")
+            ? controller.capture(
+                controller.state.evidence.some(
+                  (evidence) => evidence.stepId === controller.state.currentStepId,
+                )
+                  ? "verification"
+                  : "initial",
+              )
             : undefined,
         )
         .catch((error) => diagnostic("background:unexpected", { instanceId, ...safeError(error) }))
@@ -246,12 +258,7 @@ registerMiniapp<Channels>((session) => {
     try {
       await session.transcription.configure({
         languageHints: ["en"],
-        vocabulary: [
-          "start inspection",
-          "verify",
-          "escalate",
-          "finish inspection",
-        ],
+        vocabulary: ["start inspection", "verify", "escalate", "finish inspection"],
       });
       diagnostic("voice:ready", {
         instanceId,

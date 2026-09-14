@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { networkInterfaces } from "node:os";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
@@ -7,6 +8,13 @@ const names = ["server", "miniapp"];
 const children = [];
 const specs = [];
 let stopping = false;
+const lanAddress = Object.values(networkInterfaces())
+  .flat()
+  .find((address) => address?.family === "IPv4" && !address.internal)?.address;
+const devEnvironment = { ...process.env };
+if (!devEnvironment.MENTRA_PUBLIC_SERVER_URL && lanAddress)
+  devEnvironment.MENTRA_PUBLIC_SERVER_URL = `http://${lanAddress}:8787`;
+
 const stop = (signal = "SIGTERM") => {
   if (stopping) return;
   stopping = true;
@@ -33,7 +41,7 @@ for (const { dir, name, script } of specs) {
   const child = spawn("bun", ["run", script], {
     cwd: dir,
     stdio: "inherit",
-    env: process.env,
+    env: devEnvironment,
   });
   child.once("error", (error) => {
     console.error(`Could not start ${name}:`, error.message);
@@ -43,7 +51,9 @@ for (const { dir, name, script } of specs) {
   children.push(child);
 }
 
-console.log("\nV0 services running. Scan the miniapp QR in MentraOS; Ctrl+C stops both.\n");
+console.log(
+  `\nCompanion server for the phone: ${devEnvironment.MENTRA_PUBLIC_SERVER_URL || "configure in connection settings"}\nScan the miniapp QR in MentraOS; Ctrl+C stops both.\n`,
+);
 
 process.once("SIGINT", () => stop("SIGINT"));
 process.once("SIGTERM", () => stop("SIGTERM"));

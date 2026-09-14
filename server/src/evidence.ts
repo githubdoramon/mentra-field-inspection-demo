@@ -3,6 +3,7 @@ import type { IncomingMessage } from "node:http";
 import { join, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
+import { loadProcedure } from "./procedure.js";
 import { config } from "./config.js";
 import { RequestError } from "./errors.js";
 import { logEvent } from "./logging.js";
@@ -72,6 +73,9 @@ function recordResponse(record: EvidenceRecord): JsonObject {
 export async function archiveEvidence(req: IncomingMessage, body: JsonObject): Promise<JsonObject> {
   const attemptId = requiredString(body, "attemptId");
   const stepId = requiredString(body, "stepId");
+  const procedure = await loadProcedure(body);
+  if (!procedure.steps.some((step) => step.stepId === stepId))
+    throw new RequestError(404, "STEP_NOT_FOUND", "Procedure step was not found");
   const sourceUrl = requiredString(body, "photoUrl");
   const kind = typeof body.kind === "string" ? body.kind : "inspection";
   const requestedMime = typeof body.mimeType === "string" ? body.mimeType : "";
@@ -86,6 +90,8 @@ export async function archiveEvidence(req: IncomingMessage, body: JsonObject): P
   const record: EvidenceRecord = {
     id,
     attemptId,
+    procedureId: procedure.procedureId,
+    procedureVersion: procedure.version,
     stepId,
     kind,
     mimeType,
@@ -105,6 +111,8 @@ export async function archiveEvidence(req: IncomingMessage, body: JsonObject): P
   logEvent("evidence.saved", {
     evidenceId: id,
     attemptId,
+    procedureId: procedure.procedureId,
+    procedureVersion: procedure.version,
     stepId,
     kind,
     mimeType,

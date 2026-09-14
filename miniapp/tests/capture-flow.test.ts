@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { InspectionController, type Ports } from "../src/shared/controller";
-import { STEP_ID } from "../src/shared/workflow";
+import { STEP_ID, testSnapshot } from "./fixtures";
 import type { InspectionSnapshot } from "../src/shared/types";
 
 function pendingCheck(overrides: Partial<Ports> = {}) {
@@ -19,6 +19,7 @@ function pendingCheck(overrides: Partial<Ports> = {}) {
     ...overrides,
   };
   const controller = new InspectionController(ports);
+  controller.state = testSnapshot();
   const previous = {
     id: "previous-photo",
     attemptId: "previous-attempt",
@@ -34,6 +35,7 @@ function pendingCheck(overrides: Partial<Ports> = {}) {
   controller.state.attempts = [
     {
       id: previous.attemptId,
+      stepId: STEP_ID,
       kind: "initial",
       status: "pending",
       evidenceId: previous.id,
@@ -74,7 +76,15 @@ test("Retry check evaluates the saved photo without activating the camera", asyn
   await controller.retryCheck();
   expect(captures()).toBe(0);
   expect(requests).toEqual([
-    { path: "/api/evaluate", body: { evidenceId: "previous-photo", stepId: STEP_ID } },
+    {
+      path: "/api/evaluate",
+      body: {
+        evidenceId: "previous-photo",
+        stepId: STEP_ID,
+        procedureId: controller.state.procedureId,
+        procedureVersion: controller.state.procedureVersion,
+      },
+    },
   ]);
 });
 
@@ -96,6 +106,7 @@ test("captured photo reaches the UI before archival, and thumbnail bytes remain 
       mimeType: "image/jpeg",
     }),
   });
+  controller.state = testSnapshot();
   controller.state.status = "recording";
   controller.request = async <T>(path: string, body?: unknown): Promise<T> => {
     if (path === "/api/evidence") {
@@ -115,6 +126,8 @@ test("captured photo reaches the UI before archival, and thumbnail bytes remain 
       finding: "Slot not visible.",
       recommendedAction: "Move closer.",
       procedureReference: "test",
+      stepId: STEP_ID,
+      evidenceId: "new",
     } as T;
   };
   await controller.capture("initial");
@@ -145,20 +158,28 @@ test("voice start opens an active inspection without resetting its evidence", as
   );
 });
 
-test("older saved inspections regain server references without resetting progress", async () => {
-  const { controller } = pendingCheck();
-  const saved = structuredClone(controller.state);
-  saved.steps = saved.steps.map(({ references: _references, ...step }) => step);
+test("saved workflow references and progress survive server unavailability", async () => {
+  const saved = testSnapshot();
   saved.steps[0].state = "passed";
-  const restored = pendingCheck({ load: async () => JSON.stringify(saved) }).controller;
-  await restored.init();
-  expect(restored.state.steps[0].state).toBe("passed");
-  expect(restored.state.evidence).toHaveLength(1);
-  expect(restored.state.steps[0].references?.seated).toBe(
-    `/api/reference?stepId=${encodeURIComponent(STEP_ID)}&role=seated`,
-  );
-  await restored.setServer("http://192.168.1.99:8787");
-  expect(restored.state.serverUrl + restored.state.steps[0].references?.seated).toBe(
-    `http://192.168.1.99:8787/api/reference?stepId=${encodeURIComponent(STEP_ID)}&role=seated`,
-  );
+  const { controller } = pendingCheck({ load: async () => JSON.stringify(saved) });
+  controller.request = async () => {
+    throw new Error("offline");
+  };
+  await controller.init();
+  expect(controller.state.steps[0].state).toBe("passed");
+  expect(controller.state.steps[0].references).toEqual(saved.steps[0].references);
+  expect(controller.state.procedureVersion).toBe(saved.procedureVersion);
+});
+
+test("explicit development companion URL replaces a saved address without resetting progress", async () => {
+  const saved = testSnapshot();
+  saved.serverUrl = "http://192.168.1.42:8787";
+  saved.steps[0].state = "passed";
+  const { controller } = pendingCheck({ load: async () => JSON.stringify(saved) });
+  controller.request = async () => {
+    throw new Error("offline");
+  };
+  await controller.init("http://192.168.1.99:8787", true);
+  expect(controller.state.serverUrl).toBe("http://192.168.1.99:8787");
+  expect(controller.state.steps[0].state).toBe("passed");
 });

@@ -10,8 +10,14 @@ import {
   safeUpstreamExcerpt,
   upstreamFailureCause,
 } from "./logging.js";
-import { loadProcedure } from "./procedure.js";
-import type { AICallResult, EvidenceRecord, JsonObject, ProcedureStep } from "./types.js";
+
+import type {
+  AICallResult,
+  EvidenceRecord,
+  JsonObject,
+  Procedure,
+  ProcedureStep,
+} from "./types.js";
 
 function aiEndpoint(): string {
   try {
@@ -35,14 +41,15 @@ function countImageParts(value: unknown): number {
 async function prepareModelImage(
   bytes: Buffer,
   role: string,
+  maxEdge = config.aiImageMaxEdge,
 ): Promise<{ type: "image_url"; image_url: { url: string } }> {
   try {
     const original = await sharp(bytes).metadata();
     const { data, info } = await sharp(bytes)
       .rotate()
       .resize({
-        width: config.aiImageMaxEdge,
-        height: config.aiImageMaxEdge,
+        width: maxEdge,
+        height: maxEdge,
         fit: "inside",
         withoutEnlargement: true,
       })
@@ -80,11 +87,14 @@ export async function imageParts(
 ): Promise<Array<{ type: "image_url"; image_url: { url: string } }>> {
   const references: Array<{ type: "image_url"; image_url: { url: string } }> = [];
   if (step.references) {
-    for (const [role, reference] of [
-      ["reference_loose", step.references.loose],
-      ["reference_seated", step.references.seated],
-    ]) {
-      references.push(await prepareModelImage(await readFile(join(ROOT, reference)), role));
+    for (const reference of step.references) {
+      references.push(
+        await prepareModelImage(
+          await readFile(join(ROOT, reference.path)),
+          `reference_${reference.role}`,
+          Math.min(config.aiReferenceMaxEdge, config.aiImageMaxEdge),
+        ),
+      );
     }
   }
   if (evidence)
@@ -158,12 +168,12 @@ export function parseModelJson(content: unknown): JsonObject {
 
 export async function buildModelMessages(
   step: ProcedureStep,
-  evidence?: EvidenceRecord,
+  evidence: EvidenceRecord | undefined,
+  context: Procedure,
 ): Promise<unknown[]> {
   const criteria = (step.visualCriteria || []).map((item) => `- ${item}`).join("\n");
   const references = await imageParts(step, evidence);
-  const context = await loadProcedure();
-  const text = `Asset: ${JSON.stringify(context.asset)}. Work order and history: ${JSON.stringify(context.workOrder)}.\nYou are evaluating a field inspection photo for a private procedure.\nProcedure step: ${step.title}\nInstruction: ${step.instruction}\nVisible criteria:\n${criteria}\n\nThe first two images, if present, are loose and correctly seated references. The final image is the technician's current evidence. Assess only what is visible. If the current image is missing, too distant, obstructed, or otherwise insufficient, use evidence_unclear. Use adjustment_required when the part is visible but visibly displaced or not seated. Use pass only when every visible criterion is satisfied. Do not infer hidden fastening strength or machine safety. Return JSON only with exactly these fields: status (pass|adjustment_required|evidence_unclear), finding (short sentence), recommendedAction (short sentence), confidence (number 0..1).`;
+  const text = `Asset: ${JSON.stringify(context.asset)}. Work order and history: ${JSON.stringify(context.workOrder)}.\nYou are evaluating a field inspection photo for a private procedure.\nProcedure step: ${step.title}\nInstruction: ${step.instruction}\nVisible criteria:\n${criteria}\n\nReference images are optional good/bad examples. Captions in image order: ${JSON.stringify(step.references || [])}. ${evidence ? "The final image is the technician's current evidence." : "There is no current evidence image; return evidence_unclear."} Assess only what is visible. If the current image is missing, too distant, obstructed, or otherwise insufficient, use evidence_unclear. Use adjustment_required when adequate evidence shows any acceptance criterion is not satisfied. Use pass only when every visible criterion is satisfied. Respect the step limitations: ${(step.limitations || []).join("; ")}. Do not infer hidden conditions or safety. Return JSON only with exactly these fields: status (pass|adjustment_required|evidence_unclear), finding (short sentence), recommendedAction (short sentence), confidence (number 0..1).`;
   return [{ role: "user", content: [{ type: "text", text }, ...references] }];
 }
 
@@ -199,6 +209,10 @@ export async function callAI(
         model: config.aiModel,
         messages,
         temperature: 0,
+        reasoning_effort: "low",
+        reasoning: {
+          effort: "low"
+        },
         max_tokens: maxTokens,
         ...(config.aiModel.toLowerCase().startsWith("qwen")
           ? { enable_thinking: config.aiEnableThinking }

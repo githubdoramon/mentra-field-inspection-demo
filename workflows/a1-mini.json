@@ -1,0 +1,101 @@
+{
+  "procedureId": "a1-mini-v1",
+  "version": 2,
+  "title": "A1 mini Printer inspection",
+  "workOrder": {
+    "id": "WO-240913-17",
+    "status": "scheduled",
+    "location": "Bench 04",
+    "lastService": "2026-08-14",
+    "previousIssue": "intermittent first-layer adhesion"
+  },
+  "asset": {
+    "id": "A1M-0042",
+    "name": "Bambu Lab A1 mini",
+    "technician": "Sample technician"
+  },
+  "steps": [
+    {
+      "stepId": "purge-limiter",
+      "title": "Check purge limiter seating",
+      "instruction": "Align the purge limiter with its mounting slot, then slide it horizontally into place until fully seated. Confirm that the gray mounting section fits into the matching cutout, with no visible gap or displacement.",
+      "visualCriteria": [
+        "The green purge limiter is aligned with the printer's mounting slot.",
+        "The gray mounting section sits inside the matching cutout.",
+        "The piece is fully seated with no visible gap or displacement."
+      ],
+      "limitations": [
+        "A photograph establishes visible seating only; it cannot establish hidden fastening strength or machine safety."
+      ],
+      "references": [
+        {
+          "role": "bad",
+          "path": "knowledge/purge-limiter-loose.jpeg",
+          "caption": "Limiter displaced from its mounting slot."
+        },
+        {
+          "role": "good",
+          "path": "knowledge/purge-limiter-seated.jpeg",
+          "caption": "Limiter aligned and fully seated with no visible gap."
+        }
+      ],
+      "captureInstruction": "Frame the purge limiter and mounting slot clearly, then press once to capture.",
+      "successMessage": "Purge limiter seating check passed."
+    },
+    {
+      "stepId": "lubrication",
+      "title": "Check lubrication status",
+      "instruction": "Open the printer panel showing maintenance or lubrication status and inspect it for an axis lubrication warning.",
+      "captureInstruction": "Show the complete maintenance status panel with readable text.",
+      "visualCriteria": [
+        "The printer maintenance or lubrication status panel is clearly identifiable and readable.",
+        "The panel explicitly shows lubrication is current or not required, with no active axis lubrication warning."
+      ],
+      "limitations": [
+        "A photo checks the displayed maintenance status only; it does not prove the axes are physically lubricated.",
+        "Absence of a warning on an unrelated screen is insufficient evidence."
+      ],
+      "successMessage": "Printer panel lubrication status check passed.",
+      "references": [
+        {
+          "role": "bad",
+          "path": "knowledge/lubrication-needed.jpeg",
+          "caption": "Printer panel shows there is the need to lub the axis."
+        },
+        {
+          "role": "good",
+          "path": "knowledge/lubrication-ok.jpeg",
+          "caption": "Printer panel shows regular initial screen."
+        }
+      ]
+    },
+    {
+      "stepId": "build-plate",
+      "title": "Inspect build plate condition",
+      "instruction": "Inspect the build plate for leftover print material, visible contamination, and visible damage.",
+      "captureInstruction": "Frame the complete build plate close enough to see its surface condition.",
+      "visualCriteria": [
+        "The complete build plate surface is visible and sufficiently detailed.",
+        "No leftover print material or visible contamination is present.",
+        "No visible cracks, gouges, or peeling surface are present.",
+        "It fits well on top of the bed and overall structure"
+      ],
+      "limitations": [
+        "A photograph cannot establish hidden damage, surface adhesion performance or proper fit."
+      ],
+      "successMessage": "Build plate condition check passed.",
+      "references": [
+        {
+          "role": "bad",
+          "path": "knowledge/bed-wrong.jpeg",
+          "caption": "The build-plate contains print leftovers on its bottom part, and is not well fitter on the bed."
+        },
+        {
+          "role": "good",
+          "path": "knowledge/bed-ok.jpeg",
+          "caption": "The build plate is totally clean, and perfectly fit on the bed below."
+        }
+      ]
+    }
+  ]
+}

@@ -31,6 +31,7 @@ export interface Finding {
 }
 
 export interface Attempt {
+  stepId: string;
   id: string;
   kind: "initial" | "verification";
   status: "capturing" | "pending" | EvaluationStatus;
@@ -46,10 +47,23 @@ export interface ProcedureStep {
   title: string;
   instruction: string;
   state: "current" | "pending" | "passed";
-  references?: { loose: string; seated: string };
+  captureInstruction?: string;
+  successMessage?: string;
+  visualCriteria?: string[];
+  limitations?: string[];
+  references?: Array<{ role: "good" | "bad"; url: string; caption: string }>;
+  escalation?: { id: string; createdAt: number; status: string; url?: string };
 }
 
 export interface RecordingState {
+  inspectionId?: string;
+  clipIndex?: number;
+  startRequestedAt?: number;
+  stopRequestedAt?: number;
+  stopConfirmedAt?: number;
+  durationSeconds?: number | null;
+  durationStatus?: "available" | "unavailable";
+  uploadedAt?: string;
   recordingId?: string;
   startedAt?: number;
   status: "idle" | "recording" | "stopped" | "uploading" | "uploaded" | "interrupted" | "error";
@@ -60,6 +74,11 @@ export interface RecordingState {
 
 export interface InspectionSnapshot {
   version: 1;
+  procedureId?: string;
+  procedureVersion?: number;
+  procedureTitle?: string;
+  workflow?: WorkflowDefinition;
+  workflows?: WorkflowDefinition[];
   workOrder: string;
   asset: { id: string; model: string; location: string };
   technician: string;
@@ -69,7 +88,7 @@ export interface InspectionSnapshot {
   termination?: { reason: string; endedAt: number };
   status: InspectionStatus;
   currentStepId: string | null;
-  operation?: "start" | "capture" | "ask" | "escalate" | "finish" | "reset";
+  operation?: "navigate" | "start" | "capture" | "ask" | "escalate" | "finish" | "reset";
   steps: ProcedureStep[];
   attempts: Attempt[];
   evidence: Evidence[];
@@ -91,6 +110,15 @@ export interface EvaluationResponse {
   finding: string;
   recommendedAction: string;
   procedureReference: string;
+}
+
+export interface WorkflowDefinition {
+  id: string;
+  version: number;
+  title: string;
+  asset: { id: string; name: string; technician: string };
+  workOrder: { id: string; location: string };
+  steps: Array<Omit<ProcedureStep, "id" | "number" | "state"> & { stepId: string }>;
 }
 
 export interface ServerHealth {
