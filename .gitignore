@@ -1,0 +1,23 @@
+# Dependencies and build output
+node_modules/
+miniapp/node_modules/
+server/node_modules/
+miniapp/dist/
+miniapp/build/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+server/.env
+
+# Runtime evidence and generated reports (photos/video may be large)
+data/
+server/data/
+*.log
+*.zip
+
+# Local OS/editor files
+.DS_Store
+.idea/
+.vscode/

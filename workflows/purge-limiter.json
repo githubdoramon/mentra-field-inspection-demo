@@ -1,0 +1,61 @@
+{
+  "procedureId": "a1-mini-purge-limiter-v1",
+  "version": 1,
+  "title": "Bambu Lab A1 mini inspection",
+  "workOrder": {
+    "id": "WO-240913-17",
+    "status": "scheduled",
+    "location": "Bench 04",
+    "lastService": "2026-08-14",
+    "previousIssue": "intermittent first-layer adhesion"
+  },
+  "asset": {
+    "id": "A1M-0042",
+    "name": "Bambu Lab A1 mini",
+    "technician": "Sample technician"
+  },
+  "steps": [
+    {
+      "stepId": "purge-limiter",
+      "title": "Check purge limiter seating",
+      "instruction": "Align the purge limiter with its mounting slot, then slide it horizontally into place until fully seated. Confirm that the gray mounting section fits into the matching cutout, with no visible gap or displacement.",
+      "status": "implemented",
+      "visualCriteria": [
+        "The green purge limiter is aligned with the printer's mounting slot.",
+        "The gray mounting section sits inside the matching cutout.",
+        "The piece is fully seated with no visible gap or displacement."
+      ],
+      "limitations": [
+        "A photograph establishes visible seating only; it cannot establish hidden fastening strength or machine safety."
+      ],
+      "references": {
+        "loose": "knowledge/purge-limiter-loose.jpeg",
+        "seated": "knowledge/purge-limiter-seated.jpeg"
+      }
+    },
+    {
+      "stepId": "frame-and-nozzle",
+      "title": "Inspect frame and nozzle",
+      "instruction": "Inspect the frame and nozzle for visible damage or obstruction.",
+      "status": "pending"
+    },
+    {
+      "stepId": "motion-check",
+      "title": "Check movement",
+      "instruction": "Check that the printer moves smoothly through its operating range.",
+      "status": "pending"
+    },
+    {
+      "stepId": "bed-condition",
+      "title": "Inspect build plate",
+      "instruction": "Inspect the build plate for cleanliness and visible damage.",
+      "status": "pending"
+    },
+    {
+      "stepId": "test-print",
+      "title": "Run a test print",
+      "instruction": "Run the approved test print and record the result.",
+      "status": "pending"
+    }
+  ]
+}

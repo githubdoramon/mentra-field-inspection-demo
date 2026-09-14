@@ -1,0 +1,16 @@
+.image-upload {
+  position: relative;
+  cursor: pointer;
+}
+.image-upload input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.image-upload.disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}

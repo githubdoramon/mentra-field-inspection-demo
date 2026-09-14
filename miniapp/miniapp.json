@@ -1,0 +1,39 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "tech.ramon.inspection",
+  "version": "0.1.0",
+  "name": "Field Inspection",
+  "description": "Glasses-first guided inspection for field service work.",
+  "type": "background",
+  "sdkVersion": "3.2.0-dev.227",
+  "icon": "./public/field-inspection-logo.png",
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [
+    { "type": "CAMERA", "description": "Capture inspection evidence from the glasses camera" },
+    {
+      "type": "MICROPHONE",
+      "description": "Listen for English inspection commands and record the session"
+    }
+  ],
+  "hardwareRequirements": [
+    {
+      "type": "CAMERA",
+      "level": "REQUIRED",
+      "description": "Required for visual inspection evidence and demo recording"
+    },
+    {
+      "type": "MICROPHONE",
+      "level": "OPTIONAL",
+      "description": "Enables English voice commands and recording audio"
+    },
+    {
+      "type": "SPEAKER",
+      "level": "OPTIONAL",
+      "description": "Reads instructions and findings aloud"
+    }
+  ],
+  "port": 3180
+}
