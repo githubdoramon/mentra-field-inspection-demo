@@ -39,6 +39,13 @@ Runtime files are written beneath the repository's `data/` directory. The
 purge-limiter procedure and two visual references are in `workflows/` and
 `knowledge/`.
 
+The server entrypoint is intentionally small. Runtime concerns are split across
+`config.ts`, `logging.ts`, and `storage.ts` (process setup and storage layout),
+`http.ts` and `routes.ts` (request handling), `procedure.ts` and `records.ts` (workflow/report shaping),
+`evidence.ts` (photo archival), `ai.ts` and `inspection.ts` (AI transport and
+inspection actions), and `video.ts` plus `static-files.ts` (recordings and
+local artifacts).
+
 Reference images have one source in `knowledge/`. The reference route serves
 only images declared by the active workflow, not arbitrary knowledge files.
 The miniapp loads these through its configured server URL; viewing references
